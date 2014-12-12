@@ -6,9 +6,95 @@
 #include <cmath>
 #include <iostream>
 #include <iterator>
+#include <list>
 
 // Using default seed, deterministic
 std::mt19937_64 gen;
+
+// TODO: use a smart algorithm to maintain this set...
+// http://ieeexplore.ieee.org/xpls/abs_all.jsp?arnumber=1237166&tag=1
+template<class Individual>
+class ParetoSet
+{
+public:
+	int try_include(const Individual& ind) {
+		int dominated_count = 0;
+		auto p = pareto_set.begin();
+		do {
+			bool dominated_by_p = true;
+			bool dominating_p = false;
+			bool can_dominate = true;
+			auto iv = std::begin(ind.vals);
+			auto pv = std::begin(p->vals);
+
+			do {
+				if(*iv < *pv) {
+					dominated_by_p = false;
+					if(can_dominate) {
+						dominating_p = true;
+						while(++iv != std::end(ind.vals)) {
+							++pv;
+							if(*iv > *pv) {
+								dominating_p = false;
+								break;
+							}
+						}
+					}
+					break;
+				} else if(*pv < *iv) {
+					can_dominate = false;
+				}
+				++pv;
+				++iv;
+			} while(iv != std::end(ind.vals));
+
+			if(dominated_by_p) {
+				++dominated_count;
+				break;
+			} else if(dominating_p) {
+				auto tmp = p++;
+				pareto_set.erase(tmp);
+				--dominated_count;
+				break;
+			}
+			++p;
+		} while(p != pareto_set.end());
+
+		auto dominates = [](const Individual& a, const Individual& b) {
+			auto av = std::begin(a.vals);
+			auto bv = std::begin(b.vals);
+			do {
+				if(*bv < *av)
+					return false;
+			} while(av != std::end(a.vals));
+			return true;
+		}
+
+		if(dominated_count > 0) {
+			while(p != pareto_set.end()) {
+				if(dominates(*p, ind)) {
+					++dominated_count;
+				}
+				++p;
+			}
+		} else {
+			while(p != pareto_set.end()) {
+				if(dominates(ind, *p)) {
+					auto tmp = p++;
+					pareto_set.erase(tmp);
+					--dominated_count;
+				} else {
+					++p;
+				}
+			}
+		}
+
+		return dominated_count;
+	}
+
+private:
+	std::list<Individual> pareto_set;
+};
 
 template<class Vector, class Function, class ValidationFunction, class Real>
 Vector SE(const Vector& x_ini, Function obj_func, ValidationFunction is_valid,
