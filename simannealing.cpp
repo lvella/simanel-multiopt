@@ -108,8 +108,10 @@ Vector SE(const Vector& x_ini, Function obj_func, ValidationFunction is_valid,
 int main()
 {
 	std::array<double, 2> X = {0.5, 0.5};
+	size_t call_count = 0;
 
-	auto obj_func = [](std::array<double, 2> p){
+	auto obj_func = [&](std::array<double, 2> p){
+		++call_count;
 		//return p[0]*p[0] - 3.0*p[0]*p[1] + 4.0*p[1]*p[1] + p[0] - p[1];
 		return 100.0 * std::pow(p[0] - p[1]*p[1], 2) - std::pow(1.0 - p[0], 2);
 	};
@@ -125,4 +127,5 @@ int main()
 	};
 	print(X);
 	print(result);
+	std::cout << "Objective function calls: " << call_count << std::endl;
 }
