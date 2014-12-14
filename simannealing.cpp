@@ -6,23 +6,37 @@
 #include <cmath>
 #include <iostream>
 #include <iterator>
+#include <fstream>
 #include <list>
+#include <cassert>
 
 // Using default seed, deterministic
 std::mt19937_64 gen;
 
-template<class ValVector>
+template<class T> struct base_type { typedef T type; };
+template<class T> struct base_type<const T&> { typedef T type; };
+template<class T> struct base_type<const T> { typedef T type; };
+template<class T> struct base_type<T&> { typedef T type; };
+
+template<class ValVector, class ParetoSet>
 class Perturber
 {
 public:
-	typedef decltype(*std::begin(ValVector())) Real;
+	typedef typename base_type<decltype(*std::begin(ValVector()))>::type Real;
 
-	template<class ScaleVectorA, class ScaleVectorB>
-	Perturber(size_t n, const ScaleVectorA& traversal_ini_scale, const ScaleVectorB& location_ini_scale):
+	template<class VA, class VB, class VC, class VD>
+	Perturber(size_t n, const VA& traversal_ini_scale, const VB& location_ini_scale,
+			const VC& lower_limit, const VD& upper_limit,
+			const ParetoSet& archive, const Real& temperature):
 		traversals_stat(n),
+		locations_stat(n),
 		traversal_scale(std::begin(traversal_ini_scale), std::end(traversal_ini_scale)),
 		location_scale(std::begin(location_ini_scale), std::end(location_ini_scale)),
-		coin(0,1)
+		lower_limit(std::begin(lower_limit), std::end(lower_limit)),
+		upper_limit(std::begin(upper_limit), std::end(upper_limit)),
+		coin(0,1),
+		pareto_set(archive),
+		T(temperature)
 	{}
 
 	bool perturb(size_t direction, Real& val)
@@ -30,9 +44,12 @@ public:
 		bool is_location = coin(gen);
 		Real rad = is_location ? location_scale[direction] : traversal_scale[direction];
 
+		Real from = std::max(val - rad, lower_limit[direction]);
+		Real to = std::min(val + rad, upper_limit[direction]);
+
 		// Paper says to use Lagrange distribution, but I find it silly
 		// so I am just using uniform distribution...
-		val += std::uniform_real_distribution<Real>(-rad, rad)(gen);
+		val = std::uniform_real_distribution<Real>(from, to)(gen);
 
 		return is_location;
 	}
@@ -40,18 +57,20 @@ public:
 	void add_location_stat(size_t direction, bool accepted)
 	{
 		LocationStat& dir_stat = locations_stat[direction];
-		dir_stat.taken.set(dir_stat.count++, accepted);
+		++dir_stat.total_count;
+		if(accepted)
+			++dir_stat.taken_count;
 
-		if(dir_stat.count == dir_stat.taken.size())
+		if(dir_stat.total_count >= 20 && can_update_location())
 		{
-			Real alpha = dir_stat.taken.count() / float(dir_stat.taken.size());
+			Real alpha = dir_stat.taken_count / float(dir_stat.total_count);
 			Real &sigma = location_scale[direction]; 
 			if(alpha > 0.4)
 				sigma *= 1.0 + 2.0 * (alpha - 0.4) / 0.6;
 			else if(alpha < 0.3)
 				sigma /= 1.0 + 2.0 * (0.3 - alpha) / 0.3;
 
-			dir_stat.count = 0;
+			dir_stat = LocationStat();
 		}
 	}
 
@@ -60,7 +79,7 @@ public:
 		// Calculate distance taken from the previous point in solution space
 		Real dist = 0.0;
 		auto cv = std::begin(curr);
-		for(nv: next) {
+		for(auto nv: next) {
 			Real dif = nv - *cv;
 			dist += dif * dif;
 			++cv;
@@ -71,7 +90,7 @@ public:
 		// the size of the displacement in solution space, to recalculate
 		// the scale of the search random perturbation.
 		std::vector<TraversalStat> &dir_stat = traversals_stat[direction];
-		dir_stat.push_back({std::abs(param_step_size), obj_dist});
+		dir_stat.push_back({std::abs(param_step_size), dist});
 
 		// If we have enough stored statistics, calculate the new scale
 		if(dir_stat.size() == 51) {
@@ -116,11 +135,16 @@ public:
 	}
 
 private:
+	bool can_update_location()
+	{
+		return pareto_set.size() >= 10 && (T * pareto_set.size() /* TODO: take attainment surface into account */ > 1.0);
+	}
+
 	struct TraversalStat {
 		Real param_step_size;
 		Real obj_dist;
 
-		bool operator<(const TraversalStat& other) 
+		bool operator<(const TraversalStat& other) const
 		{
 			return param_step_size < other.param_step_size;
 		}
@@ -128,19 +152,27 @@ private:
 
 	struct LocationStat {
 		LocationStat():
-			count(0)
+			taken_count(0),
+			total_count(0)
 		{}
 
-		std::bitset<20> taken;
-		unsigned char count;
+		size_t taken_count;
+		size_t total_count;
 	};
 
 	std::vector<std::vector<TraversalStat>> traversals_stat;
 	std::vector<LocationStat> locations_stat;
+
 	std::vector<Real> traversal_scale;
 	std::vector<Real> location_scale;
 
+	std::vector<Real> lower_limit;
+	std::vector<Real> upper_limit;
+
 	std::uniform_int_distribution<unsigned short> coin;
+
+	const ParetoSet &pareto_set;
+	const Real &T;
 };
 
 template<class ValVector>
@@ -154,7 +186,7 @@ bool dominates(const ValVector& a, const ValVector& b) {
 		++bv;
 	} while(av != std::end(a));
 	return true;
-}
+};
 
 // TODO: use a smart algorithm to maintain this set...
 // http://ieeexplore.ieee.org/xpls/abs_all.jsp?arnumber=1237166&tag=1
@@ -162,6 +194,8 @@ template<class Individual>
 class ParetoSet
 {
 public:
+	ParetoSet() = default;
+
 	ParetoSet(const Individual& ind) {
 		pareto_set.push_back(ind);
 	}
@@ -221,7 +255,7 @@ public:
 				++bv;
 			} while(av != std::end(a));
 			return true;
-		}
+		};
 
 		if(dominated_count > 0) {
 			while(p != pareto_set.end()) {
@@ -247,27 +281,36 @@ public:
 		return dominated_count;
 	}
 
-	size_t size()
+	size_t size() const
 	{
 		return pareto_set.size();
+	}
+
+	std::list<Individual> get_inner_set()
+	{
+		return pareto_set;
 	}
 
 private:
 	std::list<Individual> pareto_set;
 };
 
-template<class Vector, class Function, class ValidationFunction, class Real>
-Vector MOSA(const Vector& x_ini, Function obj_funcs, ValidationFunction is_valid,
-		Real T_ini, Real rt, const Vector& ini_search_radius, size_t Ns, size_t Nt, size_t Ne)
-{
-	static_assert(std::is_same<decltype(*std::begin(obj_funcs(x_ini))), Real>::value,
-		"obj_funcs must return an interable of values of type Real");
-	typedef decltype(obj_funcs(x_ini)) ValVector;
+template<class Vector, class ValVector>
+struct Individual {
+	Vector x;
+	ValVector vals;
+};
 
-	struct Individual {
-		Vector x;
-		ValVector vals;
-	};
+template<class Vector, class Function, class Real>
+auto MOSA(const Vector& x_ini, Function obj_funcs, const Vector& lower_limit, const Vector& upper_limit,
+		Real T_ini, Real rt, const Vector& ini_search_radius, size_t Nt, size_t Ne)
+	-> decltype(ParetoSet<Individual<Vector, decltype(obj_funcs(x_ini))>>().get_inner_set())
+{
+	static_assert(std::is_same<decltype(*std::begin(obj_funcs(x_ini))), const Real&>::value,
+		"obj_funcs must return an interable of values of type Real");
+
+	typedef decltype(obj_funcs(x_ini)) ValVector;
+	typedef Individual<Vector, ValVector> Individual;
 
 	std::uniform_real_distribution<Real> unirand;
 
@@ -276,7 +319,7 @@ Vector MOSA(const Vector& x_ini, Function obj_funcs, ValidationFunction is_valid
 	Individual current = {x_ini, obj_funcs(x_ini)};
 
 	ParetoSet<Individual> archive(current);
-	Perturber<ValVector> perturber(x_ini.size(), ini_search_radius, ini_search_radius);
+	Perturber<ValVector, decltype(archive)> perturber(x_ini.size(), ini_search_radius, ini_search_radius, lower_limit, upper_limit, archive, T);
 	int curr_energy = 0;
 
 	// At each iteration of this loop, temperature is decreased
@@ -288,7 +331,6 @@ Vector MOSA(const Vector& x_ini, Function obj_funcs, ValidationFunction is_valid
 			// Perturb solution one direction at a time
 			// (it seems weird, but the algorithm is described as this)
 			size_t direction = 0;
-			auto rad = std::begin(search_radius);
 			for(auto &e: current.x)
 			{
 				Real orig_e = e;
@@ -300,12 +342,12 @@ Vector MOSA(const Vector& x_ini, Function obj_funcs, ValidationFunction is_valid
 
 				int new_energy = archive.try_include(current.x, next_val);
 
-				if(new_energy <= 0 && is_valid(current.x)) {
+				if(new_energy <= 0) {
 					// This move takes us closer to real Pareto set
 
 					// Check if this is a traversal move that needs statistics
 					if(!is_location && curr_energy == 0 &&
-							(new_energy == 0 || !dominates(new_val, current.vals))) {
+							(new_energy == 0 || !dominates(next_val, current.vals))) {
 							// Muttually non-dominated solutions, report statistics
 							perturber.add_traversal_stat(direction, e - orig_e, current.vals, next_val);
 					}
@@ -323,9 +365,9 @@ Vector MOSA(const Vector& x_ini, Function obj_funcs, ValidationFunction is_valid
 					if(curr_energy > 0) {
 						// Current solution is not in pareto set, so new and current
 						// solutions must be tested against each another
-						if(dominates(current.vals, new_val)) {
+						if(dominates(current.vals, next_val)) {
 							--delta;
-						} else if(dominates(new_val, current.vals)) {
+						} else if(dominates(next_val, current.vals)) {
 							++delta;
 						} else if(!is_location) {
 							// Both are mutually non-dominant, store statistics
@@ -347,21 +389,61 @@ Vector MOSA(const Vector& x_ini, Function obj_funcs, ValidationFunction is_valid
 
 					if(taken) {
 						// This solution was taken to be explored...
-						current.val = next_val;
+						current.vals = next_val;
 						curr_energy = new_energy;
 					} else {
 						// Setback, this path was not taken...
 						e = orig_e;
 					}
 				}
-				++rad;
 				++direction;
 			}
 		}
 		T *= rt;
+		//std::cout << i << std::endl;
 	}
 
-	return best.x;
+	return archive.get_inner_set();
+}
+
+void test_MOSA()
+{
+	typedef std::array<double, 3> Vector;
+	typedef std::array<double, 2> ValVector;
+
+	auto KUR = [](const Vector& x) {
+		ValVector ret;
+		ret[0] = 0.0;
+		for(int i = 0; i < 2; ++i) {
+			ret[0] += -10.0 * exp(-0.2 * sqrt(x[i]*x[i] + x[i+1]*x[i+1]));
+		}
+
+		ret[1] = 0.0;
+		for(auto xi: x) {
+			ret[1] += pow(abs(xi), 0.8) + 5.0 * sin(xi*xi*xi);
+		}
+
+		return ret;
+	};
+
+	auto KUR_valid_limits = [](const Vector& x) {
+		for(auto xi: x) {
+			if(xi < -5.0 || xi > 5.0)
+				return false;
+		}
+		return true;
+	};
+
+	auto pareto_set = MOSA<Vector>({0.0, 0.0}, KUR, {-5.0, -5.0}, {5.0, 5.0}, 1000.0, 0.85, {5.0, 5.0}, 2000, 200);
+	std::ofstream file("output.dat");
+	for(const auto &ind: pareto_set) {
+		auto ival = std::begin(ind.vals);
+		file << *(ival++);
+		while(ival != std::end(ind.vals)) {
+			file << ' ' << *(ival++);
+		}
+		file << '\n';
+	}
 }
 
 template<class Vector, class Function, class ValidationFunction, class Real>
@@ -459,7 +541,7 @@ Vector SA(const Vector& x_ini, Function obj_func, ValidationFunction is_valid,
 	return best.x;
 }
 
-int main()
+void test_SA()
 {
 	std::array<double, 2> X = {0.5, 0.5};
 	size_t call_count = 0;
@@ -482,4 +564,9 @@ int main()
 	print(X);
 	print(result);
 	std::cout << "Objective function calls: " << call_count << std::endl;
+}
+
+int main()
+{
+	test_MOSA();
 }
