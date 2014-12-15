@@ -13,7 +13,7 @@
 #include <future>
 
 // Using default seed, deterministic
-std::mt19937_64 gen;
+thread_local std::mt19937_64 gen;
 
 template<class T> struct base_type { typedef T type; };
 template<class T> struct base_type<const T&> { typedef T type; };
@@ -598,7 +598,7 @@ void test_MOSA()
 			return ret;
 		};
 
-		print_set("KUR.dat", MOSA<Vector>({0.0, 0.0, 0.0}, KUR, {-5.0, -5.0, -5.0}, {5.0, 5.0, 5.0}, 1.0, 0.88, {5.0, 5.0, 5.0}, 300, 200));
+		print_set("KUR.dat", MOSA<Vector>({0.0, 0.0, 0.0}, KUR, {-5.0, -5.0, -5.0}, {5.0, 5.0, 5.0}, 1.0, 0.92, {5.0, 5.0, 5.0}, 100, 200));
 		std::cout << "KUR, called " << call_count << " times." << std::endl;
 	}));
 
@@ -756,7 +756,7 @@ void test_MOSA()
 			return ret;
 		};
 
-		print_set("DTLZ2.dat", MOSA(filled_vector<Vector>(0.0), DTLZ2, filled_vector<Vector>(0.0), filled_vector<Vector>(1.0), 1.0, 0.90, filled_vector<Vector>(0.4), 100, 150));
+		print_set("DTLZ2.dat", MOSA(filled_vector<Vector>(0.0), DTLZ2, filled_vector<Vector>(0.0), filled_vector<Vector>(1.0), 1.0, 0.94, filled_vector<Vector>(0.4), 80, 150));
 		std::cout << "DTLZ2, called " << call_count << " times." << std::endl;
 	}));
 
