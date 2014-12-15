@@ -7,7 +7,7 @@
 #include <iostream>
 #include <iterator>
 #include <fstream>
-#include <list>
+#include <map>
 #include <cassert>
 
 // Using default seed, deterministic
@@ -175,18 +175,23 @@ private:
 	const Real &T;
 };
 
-template<class ValVector>
-bool dominates(const ValVector& a, const ValVector& b) {
-	auto av = std::begin(a);
-	auto bv = std::begin(b);
+template<class IterA, class IterB>
+bool dominates(IterA a, IterA a_end, IterB b, bool has_smaller=false) {
 	do {
-		if(*bv < *av)
+		if(*a > *b)
 			return false;
-		++av;
-		++bv;
-	} while(av != std::end(a));
-	return true;
+		else if(*a < *b)
+			has_smaller = true;
+		++a;
+		++b;
+	} while(a != a_end);
+	return has_smaller;
 };
+
+template<class Vector>
+bool dominates(const Vector& a, const Vector& b) {
+	return dominates(std::begin(a), std::end(a), std::begin(b));
+}
 
 // TODO: use a smart algorithm to maintain this set...
 // http://ieeexplore.ieee.org/xpls/abs_all.jsp?arnumber=1237166&tag=1
@@ -194,91 +199,132 @@ template<class Individual>
 class ParetoSet
 {
 public:
+	typedef decltype(Individual::x) Vector;
+	typedef decltype(Individual::vals) ValVector;
+	typedef typename base_type<decltype(*std::begin(ValVector()))>::type Real;
+
 	ParetoSet() = default;
 
 	ParetoSet(const Individual& ind) {
-		pareto_set.push_back(ind);
+		pareto_set.emplace(*std::begin(ind.vals), ind);
 	}
 
-	typedef decltype(Individual::x) Vector;
-	typedef decltype(Individual::vals) ValVector;
-
 	int try_include(const Vector& x, const ValVector& vals) {
-		int dominated_count = 0;
-		auto p = pareto_set.begin();
-		do {
-			bool dominated_by_p = true;
-			bool dominating_p = false;
-			bool can_dominate = true;
-			auto iv = std::begin(vals);
-			auto pv = std::begin(p->vals);
+		auto vals_iter = std::begin(vals);
+		Real key = *vals_iter;
+		++vals_iter;
 
-			do {
-				if(*iv < *pv) {
-					dominated_by_p = false;
-					if(can_dominate) {
-						dominating_p = true;
-						while(++iv != std::end(vals)) {
-							++pv;
-							if(*iv > *pv) {
-								dominating_p = false;
-								break;
-							}
+		auto ref_iter = pareto_set.lower_bound(key);
+
+		int dominated_count = 0;
+
+		// First we look the pareto solutions that have the same key as this
+		// one, to try to find if it dominates or is dominate by any of them
+		auto iter = ref_iter;
+		for(; iter != pareto_set.end(); ++iter) {
+			const Individual *p = &iter->second;
+			auto ip = std::begin(p->vals);
+			if(*(ip++) > key) {
+				break;
+			}
+			auto iv = vals_iter;
+			bool has_bigger = false;
+			bool has_smaller = false;
+
+			for(; iv != std::end(vals); ++iv, ++ip) {
+				if(*iv > *ip) {
+					has_bigger = true;
+				} else if(*iv < *ip) {
+					has_smaller = true;
+				}
+			}
+			if(has_bigger != has_smaller) {
+				// One dominated another...
+				// finish to handle this group with the new information.
+				if(has_bigger) {
+					// is dominated
+					++dominated_count;
+					for(++iter; iter != pareto_set.end(); ++iter) {
+						p = &iter->second;
+						ip = std::begin(p->vals);
+						if(*(ip++) > key) {
+							break;
+						}
+						if(dominates(ip, std::end(p->vals), vals_iter)) {
+							++dominated_count;
 						}
 					}
-					break;
-				} else if(*pv < *iv) {
-					can_dominate = false;
-				}
-				++pv;
-				++iv;
-			} while(iv != std::end(vals));
-
-			if(dominated_by_p) {
-				++dominated_count;
-				break;
-			} else if(dominating_p) {
-				*(p++) = {x, vals};
-				--dominated_count;
-				break;
-			}
-			++p;
-		} while(p != pareto_set.end());
-
-		auto dominates = [](const ValVector& a, const ValVector& b) {
-			auto av = std::begin(a);
-			auto bv = std::begin(b);
-			do {
-				if(*bv < *av)
-					return false;
-				++av;
-				++bv;
-			} while(av != std::end(a));
-			return true;
-		};
-
-		if(dominated_count > 0) {
-			while(p != pareto_set.end()) {
-				if(dominates(p->vals, vals)) {
-					++dominated_count;
-				}
-				++p;
-			}
-		} else if(dominated_count < 0) {
-			while(p != pareto_set.end()) {
-				if(dominates(vals, p->vals)) {
-					auto tmp = p++;
-					pareto_set.erase(tmp);
-					--dominated_count;
 				} else {
-					++p;
+					// is dominating
+					auto erase_and_inc = [&]() {
+						auto tmp = iter++;
+						pareto_set.erase(tmp);
+					};
+
+					erase_and_inc();
+					--dominated_count;
+
+					while(iter != pareto_set.end()) {
+						p = &iter->second;
+						ip = std::begin(p->vals);
+						if(*(ip++) > key) {
+							break;
+						}
+						if(dominates(vals_iter, std::end(vals), ip)) {
+							erase_and_inc();
+						} else {
+							++iter;
+						}
+					}
 				}
+				break;
 			}
-		} else {
-			pareto_set.push_back({x, vals});
 		}
 
-		return dominated_count;
+		// If current solution not dominates anyone so far in pareto set,
+		// test if smaller key solutions dominates over it...
+		if(dominated_count >= 0) {
+			for(auto iter = ref_iter; iter != pareto_set.begin();)
+			{
+				--iter;
+
+				Individual &p = iter->second;
+				auto ip = std::begin(p.vals);
+				++ip;
+
+				if(dominates(ip, std::end(p.vals), vals_iter, true)) {
+					++dominated_count;
+				} else {
+					break;
+				}
+			}
+
+			if(dominated_count)
+				return dominated_count;
+		}
+
+		// This solution is not dominated, so remove from set every one dominated by it.
+		// Continues from where last search stopped.
+		if(iter != pareto_set.end()) {
+			auto ip = std::begin(iter->second.vals);
+			++ip;
+			if(dominates(vals_iter, std::end(vals), ip, true)) {
+				auto to_remove_from = iter;
+
+				for(++iter; iter != pareto_set.end(); ++iter) {
+					ip = std::begin(iter->second.vals);
+					++ip;
+					if(!dominates(vals_iter, std::end(vals), ip, true))
+						break;
+				}
+
+				pareto_set.erase(to_remove_from, iter);
+			}
+		}
+
+		pareto_set.emplace_hint(iter, key, Individual({x, vals}));
+
+		return 0;
 	}
 
 	size_t size() const
@@ -286,13 +332,20 @@ public:
 		return pareto_set.size();
 	}
 
-	std::list<Individual> get_inner_set()
+	std::vector<Individual> get_inner_set()
 	{
-		return pareto_set;
+		std::vector<Individual> ret;
+		ret.reserve(pareto_set.size());
+
+		for(const auto &e: pareto_set) {
+			ret.push_back(e.second);
+		}
+
+		return ret;
 	}
 
 private:
-	std::list<Individual> pareto_set;
+	std::multimap<Real, Individual> pareto_set;
 };
 
 template<class Vector, class ValVector>
@@ -400,42 +453,16 @@ auto MOSA(const Vector& x_ini, Function obj_funcs, const Vector& lower_limit, co
 			}
 		}
 		T *= rt;
-		//std::cout << i << std::endl;
+		std::cout << i << std::endl;
 	}
 
 	return archive.get_inner_set();
 }
 
-void test_MOSA()
+template<class T>
+void print_set(const char* filename, T pareto_set)
 {
-	typedef std::array<double, 3> Vector;
-	typedef std::array<double, 2> ValVector;
-
-	auto KUR = [](const Vector& x) {
-		ValVector ret;
-		ret[0] = 0.0;
-		for(int i = 0; i < 2; ++i) {
-			ret[0] += -10.0 * exp(-0.2 * sqrt(x[i]*x[i] + x[i+1]*x[i+1]));
-		}
-
-		ret[1] = 0.0;
-		for(auto xi: x) {
-			ret[1] += pow(abs(xi), 0.8) + 5.0 * sin(xi*xi*xi);
-		}
-
-		return ret;
-	};
-
-	auto KUR_valid_limits = [](const Vector& x) {
-		for(auto xi: x) {
-			if(xi < -5.0 || xi > 5.0)
-				return false;
-		}
-		return true;
-	};
-
-	auto pareto_set = MOSA<Vector>({0.0, 0.0}, KUR, {-5.0, -5.0}, {5.0, 5.0}, 1000.0, 0.85, {5.0, 5.0}, 2000, 200);
-	std::ofstream file("output.dat");
+	std::ofstream file(filename);
 	for(const auto &ind: pareto_set) {
 		auto ival = std::begin(ind.vals);
 		file << *(ival++);
@@ -444,6 +471,70 @@ void test_MOSA()
 		}
 		file << '\n';
 	}
+}
+
+void test_MOSA()
+{
+	// KUR test
+	{
+		typedef std::array<double, 3> Vector;
+		typedef std::array<double, 2> ValVector;
+
+		auto KUR = [](const Vector& x) {
+			ValVector ret;
+			ret[0] = 0.0;
+			for(int i = 0; i < 2; ++i) {
+				ret[0] += -10.0 * exp(-0.2 * sqrt(x[i]*x[i] + x[i+1]*x[i+1]));
+			}
+
+			ret[1] = 0.0;
+			for(auto xi: x) {
+				ret[1] += pow(abs(xi), 0.8) + 5.0 * sin(xi*xi*xi);
+			}
+
+			return ret;
+		};
+
+		print_set("KUR.dat", MOSA<Vector>({0.0, 0.0, 0.0}, KUR, {-5.0, -5.0, -5.0}, {5.0, 5.0, 5.0}, 1.0, 0.88, {5.0, 5.0, 5.0}, 300, 200));
+	}
+
+	// GTP test
+	{
+		typedef std::array<double, 30> Vector;
+		typedef std::array<double, 2> ValVector;
+
+		auto GTP = [](const Vector& x) {
+			ValVector ret;
+			ret[0] = x[0];
+			double g = 2.0;
+			double prod = 1.0;
+			for(int i = 1; i < 30; ++i) {
+				g += x[i]*x[i] / 4000.0;
+				prod *= cos(x[i] / sqrt(i+1.0));
+			}
+			g -= prod;
+			ret[1] = g * (1.0 - sqrt(x[0] / g));
+
+			return ret;
+		};
+
+		Vector start;
+		Vector min_limits;
+		Vector max_limits;
+		Vector search_radius;
+
+		std::fill(start.begin(), start.end(), 1.0);
+
+		min_limits[0] = 0.0;
+		std::fill(min_limits.begin()+1, min_limits.end(), -5.12);
+		max_limits[0] = 1.0;
+		std::fill(max_limits.begin()+1, max_limits.end(), 5.12);
+
+		std::fill(search_radius.begin(), search_radius.end(), 5.0);
+
+		print_set("GTP.dat", MOSA<Vector>(start, GTP, min_limits, max_limits, 1.0, 0.92, search_radius, 300, 100));
+	}
+
 }
 
 template<class Vector, class Function, class ValidationFunction, class Real>
