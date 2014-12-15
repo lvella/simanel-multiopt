@@ -709,11 +709,12 @@ void test_MOSA()
 	// VNT test
 	futures.push_back(async([]()
 	{
-		typedef std::array<double, 3> Vector;
+		typedef std::array<double, 2> Vector;
+		typedef std::array<double, 3> ValVector;
 		size_t call_count = 0;
 
 		auto VNT = [&](const Vector& x) {
-			Vector ret;
+			ValVector ret;
 			
 			double tmp = x[0]*x[0] + x[1]*x[1];
 			ret[0] = 0.5 * tmp + sin(tmp);
@@ -727,7 +728,7 @@ void test_MOSA()
 			return ret;
 		};
 
-		print_set("VNT.dat", MOSA<Vector>({0.0, 0.0, 0.0}, VNT, {-3.0, -3.0, -3.0}, {3.0, 3.0, 3.0}, 1.0, 0.9, {2.0, 2.0, 2.0}, 100, 150));
+		print_set("VNT.dat", MOSA<Vector>({0.0, 0.0}, VNT, {-3.0, -3.0}, {3.0, 3.0}, 1.0, 0.9, {2.0, 2.0}, 100, 150));
 		std::cout << "VNT, called " << call_count << " times." << std::endl;
 	}));
 
