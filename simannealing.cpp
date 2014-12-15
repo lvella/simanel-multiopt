@@ -10,6 +10,7 @@
 #include <list>
 #include <cassert>
 #include <sstream>
+#include <future>
 
 // Using default seed, deterministic
 std::mt19937_64 gen;
@@ -468,9 +469,18 @@ Vector filled_vector(Real value)
 	return ret;
 }
 
+template<class F>
+std::future<void> async(F f)
+{
+	return std::async(std::launch::async, f);
+}
+
 void test_MOSA()
 {
+	std::vector<std::future<void>> futures;
+
 	//SCH1 test
+	futures.push_back(async([]()
 	{
 		typedef std::array<double, 1> Vector;
 		typedef std::array<double, 2> ValVector;
@@ -489,9 +499,10 @@ void test_MOSA()
 
 		print_set("SCH1.dat", MOSA<Vector>({-4.0}, SCH1, {-10.0}, {10.0}, 1.0, 0.88, {8.0}, 100, 100));
 		std::cout << "SCH1, called " << call_count << " times." << std::endl;
-	}
+	}));
 
 	//SCH2 test
+	futures.push_back(async([]()
 	{
 		typedef std::array<double, 1> Vector;
 		typedef std::array<double, 2> ValVector;
@@ -521,9 +532,10 @@ void test_MOSA()
 
 		print_set("SCH2.dat", MOSA<Vector>({-4.0}, SCH2, {-5.0}, {10.0}, 1.0, 0.88, {6.0}, 100, 100));
 		std::cout << "SCH2, called " << call_count << " times." << std::endl;
-	}
+	}));
 
 	//FON test
+	futures.push_back(async([]()
 	{
 		typedef std::array<double, 10> Vector;
 		typedef std::array<double, 2> ValVector;
@@ -560,9 +572,10 @@ void test_MOSA()
 
 		print_set("FON.dat", MOSA<Vector>(start, FON, min_limits, max_limits, 1.0, 0.88, search_radius, 100, 100));
 		std::cout << "FON, called " << call_count << " times." << std::endl;
-	}
+	}));
 
 	// KUR test
+	futures.push_back(async([]()
 	{
 		typedef std::array<double, 3> Vector;
 		typedef std::array<double, 2> ValVector;
@@ -587,9 +600,10 @@ void test_MOSA()
 
 		print_set("KUR.dat", MOSA<Vector>({0.0, 0.0, 0.0}, KUR, {-5.0, -5.0, -5.0}, {5.0, 5.0, 5.0}, 1.0, 0.88, {5.0, 5.0, 5.0}, 300, 200));
 		std::cout << "KUR, called " << call_count << " times." << std::endl;
-	}
+	}));
 
 	// GTP test
+	futures.push_back(async([]()
 	{
 		typedef std::array<double, 30> Vector;
 		typedef std::array<double, 2> ValVector;
@@ -628,10 +642,13 @@ void test_MOSA()
 
 		print_set("GTP.dat", MOSA<Vector>(start, GTP, min_limits, max_limits, 1.0, 0.92, search_radius, 300, 100));
 		std::cout << "GTP, called " << call_count << " times." << std::endl;
-	}
+	}));
 
 	// ZDT tests
+	futures.push_back(async([]()
 	{
+		std::vector<std::future<void>> futures;
+
 		auto g1 = [](const ZDT::Vector& x) {
 			double sum = 0.0;
 			for(int i = 1; i < x.size(); ++i) {
@@ -678,14 +695,19 @@ void test_MOSA()
 		auto max_lim = filled_vector<ZDT::Vector>(1.0);
 		auto sradius = filled_vector<ZDT::Vector>(0.5);
 
-		ZDT::run_ZDT("ZDT1", start, min_lim, max_lim, sradius, g1, h1);
-		ZDT::run_ZDT("ZDT2", start, min_lim, max_lim, sradius, g1, h2);
-		ZDT::run_ZDT("ZDT3", start, min_lim, max_lim, sradius, g1, h3);
-		ZDT::run_ZDT("ZDT4", start, min_lim, max_lim, sradius, g2, h1);
-		ZDT::run_ZDT("ZDT6", start, min_lim, max_lim, sradius, g3, h2, zdt6_f1);
-	}
+		futures.push_back(async([&](){ZDT::run_ZDT("ZDT1", start, min_lim, max_lim, sradius, g1, h1);}));
+		futures.push_back(async([&](){ZDT::run_ZDT("ZDT2", start, min_lim, max_lim, sradius, g1, h2);}));
+		futures.push_back(async([&](){ZDT::run_ZDT("ZDT3", start, min_lim, max_lim, sradius, g1, h3);}));
+		futures.push_back(async([&](){ZDT::run_ZDT("ZDT4", start, min_lim, max_lim, sradius, g2, h1);}));
+		futures.push_back(async([&](){ZDT::run_ZDT("ZDT6", start, min_lim, max_lim, sradius, g3, h2, zdt6_f1);}));
+
+		for(auto& f: futures) {
+			f.wait();
+		}
+	}));
 
 	// VNT test
+	futures.push_back(async([]()
 	{
 		typedef std::array<double, 3> Vector;
 		size_t call_count = 0;
@@ -705,11 +727,12 @@ void test_MOSA()
 			return ret;
 		};
 
-		print_set("VNT.dat", MOSA<Vector>({0.0, 0.0, 0.0}, VNT, {-3.0, -3.0, -3.0}, {3.0, 3.0, 3.0}, 1.0, 0.9, {2.0, 2.0, 2.0}, 800, 300));
+		print_set("VNT.dat", MOSA<Vector>({0.0, 0.0, 0.0}, VNT, {-3.0, -3.0, -3.0}, {3.0, 3.0, 3.0}, 1.0, 0.9, {2.0, 2.0, 2.0}, 100, 150));
 		std::cout << "VNT, called " << call_count << " times." << std::endl;
-	}
+	}));
 
 	// DTLZ2 test
+	futures.push_back(async([]()
 	{
 		typedef std::array<double, 12> Vector;
 		typedef std::array<double, 3> ValVector;
@@ -732,10 +755,13 @@ void test_MOSA()
 			return ret;
 		};
 
-		print_set("DTLZ2.dat", MOSA(filled_vector<Vector>(0.0), DTLZ2, filled_vector<Vector>(0.0), filled_vector<Vector>(1.0), 1.0, 0.90, filled_vector<Vector>(0.4), 800, 300));
+		print_set("DTLZ2.dat", MOSA(filled_vector<Vector>(0.0), DTLZ2, filled_vector<Vector>(0.0), filled_vector<Vector>(1.0), 1.0, 0.90, filled_vector<Vector>(0.4), 100, 150));
 		std::cout << "DTLZ2, called " << call_count << " times." << std::endl;
-	}
+	}));
 
+	for(auto& f: futures) {
+		f.wait();
+	}
 }
 
 template<class Vector, class Function, class ValidationFunction, class Real>
