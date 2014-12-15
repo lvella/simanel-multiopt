@@ -9,6 +9,7 @@
 #include <fstream>
 #include <map>
 #include <cassert>
+#include <sstream>
 
 // Using default seed, deterministic
 std::mt19937_64 gen;
@@ -453,7 +454,7 @@ auto MOSA(const Vector& x_ini, Function obj_funcs, const Vector& lower_limit, co
 			}
 		}
 		T *= rt;
-		std::cout << i << std::endl;
+		//std::cout << i << std::endl;
 	}
 
 	return archive.get_inner_set();
@@ -473,14 +474,149 @@ void print_set(const char* filename, T pareto_set)
 	}
 }
 
+namespace ZDT {
+
+typedef std::array<double, 10> Vector;
+typedef std::array<double, 2> ValVector;
+
+double ZDT_f1(double x){
+	return x;
+}
+
+template <class G, class H, class F1=decltype(ZDT_f1)>
+void run_ZDT(const char* name, const Vector& start, const Vector& min_limits, const Vector& max_limits, const Vector& search_radius, G g, H h, F1 f1=ZDT_f1)
+{
+	size_t call_count = 0;
+
+	auto zdt = [&](const Vector& x) {
+		ValVector ret;
+		ret[0] = f1(x[0]);
+		double g_res = g(x);
+		ret[1] = g_res * h(ret[0], g_res);
+
+		++call_count;
+
+		return ret;
+	};
+
+	std::stringstream fname;
+	fname << name << ".dat";
+	print_set(fname.str().c_str(),
+			MOSA(start, zdt, min_limits, max_limits, 1.0, 0.88, search_radius, 100, 100));
+	std::cout << name << ", called " << call_count << " times." << std::endl;
+}
+
+};
+
+template<class Vector, class Real>
+Vector filled_vector(Real value)
+{
+	Vector ret;
+	std::fill(ret.begin(), ret.end(), value);
+	return ret;
+}
+
 void test_MOSA()
 {
+	//SCH1 test
+	{
+		typedef std::array<double, 1> Vector;
+		typedef std::array<double, 2> ValVector;
+		size_t call_count = 0;
+
+		auto SCH1 = [&](const Vector& x) {
+			ValVector ret;
+			ret[0] = x[0]*x[0];
+			ret[1] = x[0] - 2.0;
+			ret[1] *= ret[1];
+
+			++call_count;
+
+			return ret;
+		};
+
+		print_set("SCH1.dat", MOSA<Vector>({-4.0}, SCH1, {-10.0}, {10.0}, 1.0, 0.88, {8.0}, 100, 100));
+		std::cout << "SCH1, called " << call_count << " times." << std::endl;
+	}
+
+	//SCH2 test
+	{
+		typedef std::array<double, 1> Vector;
+		typedef std::array<double, 2> ValVector;
+		size_t call_count = 0;
+
+		auto SCH2 = [&](const Vector& x) {
+			ValVector ret;
+			double v = x[0];
+
+			if(v <= 1.0) {
+				ret[0] = -v;
+			} else if(v <= 3.0) {
+				ret[0] = v - 2.0;
+			} else if(v <= 4.0) {
+				ret[0] = 4.0 - v;
+			} else {
+				ret[0] = v - 4.0;
+			}
+
+			ret[1] = x[0] - 5.0;
+			ret[1] *= ret[1];
+
+			++call_count;
+
+			return ret;
+		};
+
+		print_set("SCH2.dat", MOSA<Vector>({-4.0}, SCH2, {-5.0}, {10.0}, 1.0, 0.88, {6.0}, 100, 100));
+		std::cout << "SCH2, called " << call_count << " times." << std::endl;
+	}
+
+	//FON test
+	{
+		typedef std::array<double, 10> Vector;
+		typedef std::array<double, 2> ValVector;
+		size_t call_count = 0;
+
+		auto FON = [&](const Vector& x) {
+			ValVector ret;
+
+			double s1 = 0.0;
+			double s2 = 0.0;
+			for(double xi: x) {
+				double tmp = xi - 1.0 / sqrt(10.0);
+				s1 += tmp * tmp;
+				tmp = xi + 1.0 / sqrt(10.0);
+				s2 += tmp * tmp;
+			}
+			ret[0] = 1.0 - exp(-s1);
+			ret[1] = 1.0 - exp(-s2);
+
+			++call_count;
+
+			return ret;
+		};
+
+		Vector start;
+		Vector min_limits;
+		Vector max_limits;
+		Vector search_radius;
+
+		std::fill(start.begin(), start.end(), 1.0);
+		std::fill(min_limits.begin(), min_limits.end(), -4.0);
+		std::fill(max_limits.begin(), max_limits.end(), 4.0);
+		std::fill(search_radius.begin(), search_radius.end(), 6.0);
+
+		print_set("FON.dat", MOSA<Vector>(start, FON, min_limits, max_limits, 1.0, 0.88, search_radius, 100, 100));
+		std::cout << "FON, called " << call_count << " times." << std::endl;
+	}
+
 	// KUR test
 	{
 		typedef std::array<double, 3> Vector;
 		typedef std::array<double, 2> ValVector;
+		size_t call_count = 0;
 
-		auto KUR = [](const Vector& x) {
+		auto KUR = [&](const Vector& x) {
 			ValVector ret;
 			ret[0] = 0.0;
 			for(int i = 0; i < 2; ++i) {
@@ -492,18 +628,22 @@ void test_MOSA()
 				ret[1] += pow(abs(xi), 0.8) + 5.0 * sin(xi*xi*xi);
 			}
 
+			++call_count;
+
 			return ret;
 		};
 
 		print_set("KUR.dat", MOSA<Vector>({0.0, 0.0, 0.0}, KUR, {-5.0, -5.0, -5.0}, {5.0, 5.0, 5.0}, 1.0, 0.88, {5.0, 5.0, 5.0}, 300, 200));
+		std::cout << "KUR, called " << call_count << " times." << std::endl;
 	}
 
 	// GTP test
 	{
 		typedef std::array<double, 30> Vector;
 		typedef std::array<double, 2> ValVector;
+		size_t call_count = 0;
 
-		auto GTP = [](const Vector& x) {
+		auto GTP = [&](const Vector& x) {
 			ValVector ret;
 			ret[0] = x[0];
 			double g = 2.0;
@@ -514,6 +654,8 @@ void test_MOSA()
 			}
 			g -= prod;
 			ret[1] = g * (1.0 - sqrt(x[0] / g));
+
+			++call_count;
 
 			return ret;
 		};
@@ -533,6 +675,113 @@ void test_MOSA()
 		std::fill(search_radius.begin(), search_radius.end(), 5.0);
 
 		print_set("GTP.dat", MOSA<Vector>(start, GTP, min_limits, max_limits, 1.0, 0.92, search_radius, 300, 100));
+		std::cout << "GTP, called " << call_count << " times." << std::endl;
+	}
+
+	// ZDT tests
+	{
+		auto g1 = [](const ZDT::Vector& x) {
+			double sum = 0.0;
+			for(int i = 1; i < x.size(); ++i) {
+				sum += x[i];
+			}
+			return 1.0 + 9.0 * sum/(x.size() - 1);
+		};
+
+		auto g2 = [](const ZDT::Vector& x) {
+			double sum = 0.0;
+			for(int i = 1; i < x.size(); ++i) {
+				sum += x[i]*x[i] - 10.0*cos(4*M_PI*x[i]);
+			}
+			return 1.0 + 10.0 * (x.size() - 1) + sum;
+		};
+
+		auto g3 = [](const ZDT::Vector& x) {
+			double sum = 0.0;
+			for(int i = 1; i < x.size(); ++i) {
+				sum += x[i] / 9.0;
+			}
+			return 1.0 + 9.0 * pow(sum, 0.25);
+		};
+
+		auto h1 = [](double f1, double g) {
+			return 1.0 - sqrt(f1 / g);
+		};
+
+		auto h2 = [](double f1, double g) {
+			return 1.0 - pow(f1 / g, 2.0);
+		};
+
+		auto h3 = [](double f1, double g) {
+			double r = f1/g;
+			return 1.0 - sqrt(r) - r * sin(10.0 * M_PI * f1);
+		};
+
+		auto zdt6_f1 = [](double x) {
+			return 1.0 - exp(-4.0 * x) * pow(sin(6.0 * M_PI * x), 6.0);
+		};
+
+		auto start = filled_vector<ZDT::Vector>(0.5);
+		auto min_lim = filled_vector<ZDT::Vector>(0.0);
+		auto max_lim = filled_vector<ZDT::Vector>(1.0);
+		auto sradius = filled_vector<ZDT::Vector>(0.5);
+
+		ZDT::run_ZDT("ZDT1", start, min_lim, max_lim, sradius, g1, h1);
+		ZDT::run_ZDT("ZDT2", start, min_lim, max_lim, sradius, g1, h2);
+		ZDT::run_ZDT("ZDT3", start, min_lim, max_lim, sradius, g1, h3);
+		ZDT::run_ZDT("ZDT4", start, min_lim, max_lim, sradius, g2, h1);
+		ZDT::run_ZDT("ZDT6", start, min_lim, max_lim, sradius, g3, h2, zdt6_f1);
+	}
+
+	// VNT test
+	{
+		typedef std::array<double, 3> Vector;
+		size_t call_count = 0;
+
+		auto VNT = [&](const Vector& x) {
+			Vector ret;
+			
+			double tmp = x[0]*x[0] + x[1]*x[1];
+			ret[0] = 0.5 * tmp + sin(tmp);
+
+			ret[1] = pow(3.0*x[0] - 2.0*x[1] + 4.0, 2.0) / 8.0 + pow(x[0] - x[1] + 1.0, 2.0) / 27.0 + 15.0;
+
+			ret[2] = 1.0 / (tmp + 1.0) - 1.1 * exp(-tmp);
+
+			++call_count;
+
+			return ret;
+		};
+
+		print_set("VNT.dat", MOSA<Vector>({0.0, 0.0, 0.0}, VNT, {-3.0, -3.0, -3.0}, {3.0, 3.0, 3.0}, 1.0, 0.9, {2.0, 2.0, 2.0}, 800, 300));
+		std::cout << "VNT, called " << call_count << " times." << std::endl;
+	}
+
+	// DTLZ2 test
+	{
+		typedef std::array<double, 12> Vector;
+		typedef std::array<double, 3> ValVector;
+		size_t call_count = 0;
+
+		auto DTLZ2 = [&](const Vector& x) {
+			ValVector ret;
+			
+			double g = 1.0;
+			for(int i = 2; i < x.size(); ++i) {
+				g += (x[i] - 0.5) * (x[i] - 0.5);
+			}
+
+			ret[0] = g * cos(0.5*M_PI*x[0]) * cos(0.5*M_PI*x[1]);
+			ret[1] = g * cos(0.5*M_PI*x[0]) * sin(0.5*M_PI*x[1]);
+			ret[2] = g * sin(0.5*M_PI*x[0]);
+
+			++call_count;
+
+			return ret;
+		};
+
+		print_set("DTLZ2.dat", MOSA(filled_vector<Vector>(0.0), DTLZ2, filled_vector<Vector>(0.0), filled_vector<Vector>(1.0), 1.0, 0.90, filled_vector<Vector>(0.4), 800, 300));
+		std::cout << "DTLZ2, called " << call_count << " times." << std::endl;
 	}
 
 }
@@ -652,6 +901,7 @@ void test_SA()
 		}
 		std::cout << obj_func(p) << '\n';
 	};
+
 	print(X);
 	print(result);
 	std::cout << "Objective function calls: " << call_count << std::endl;
