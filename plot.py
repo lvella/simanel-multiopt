@@ -12,6 +12,8 @@ if len(lines[0]) == 2:
     x, y = zip(*lines)
 
     line, = plt.plot(x, y, 'o')
+    plt.xlabel('f₁')
+    plt.ylabel('f₂')
     plt.show()
 else:
     #if len(lines) > 1200:
@@ -22,5 +24,8 @@ else:
     ax = fig.gca(projection='3d')
     ax.scatter(x, y, z, c='r', marker='o')
 
+    ax.set_xlabel('f₁')
+    ax.set_ylabel('f₂')
+    ax.set_zlabel('f₃')
     plt.show()
 
