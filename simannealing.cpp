@@ -7,7 +7,7 @@
 #include <iostream>
 #include <iterator>
 #include <fstream>
-#include <map>
+#include <list>
 #include <cassert>
 #include <sstream>
 
@@ -200,132 +200,91 @@ template<class Individual>
 class ParetoSet
 {
 public:
-	typedef decltype(Individual::x) Vector;
-	typedef decltype(Individual::vals) ValVector;
-	typedef typename base_type<decltype(*std::begin(ValVector()))>::type Real;
-
 	ParetoSet() = default;
 
 	ParetoSet(const Individual& ind) {
-		pareto_set.emplace(*std::begin(ind.vals), ind);
+		pareto_set.push_back(ind);
 	}
 
+	typedef decltype(Individual::x) Vector;
+	typedef decltype(Individual::vals) ValVector;
+
 	int try_include(const Vector& x, const ValVector& vals) {
-		auto vals_iter = std::begin(vals);
-		Real key = *vals_iter;
-		++vals_iter;
-
-		auto ref_iter = pareto_set.lower_bound(key);
-
 		int dominated_count = 0;
+		auto p = pareto_set.begin();
+		do {
+			bool dominated_by_p = true;
+			bool dominating_p = false;
+			bool can_dominate = true;
+			auto iv = std::begin(vals);
+			auto pv = std::begin(p->vals);
 
-		// First we look the pareto solutions that have the same key as this
-		// one, to try to find if it dominates or is dominate by any of them
-		auto iter = ref_iter;
-		for(; iter != pareto_set.end(); ++iter) {
-			const Individual *p = &iter->second;
-			auto ip = std::begin(p->vals);
-			if(*(ip++) > key) {
-				break;
-			}
-			auto iv = vals_iter;
-			bool has_bigger = false;
-			bool has_smaller = false;
-
-			for(; iv != std::end(vals); ++iv, ++ip) {
-				if(*iv > *ip) {
-					has_bigger = true;
-				} else if(*iv < *ip) {
-					has_smaller = true;
-				}
-			}
-			if(has_bigger != has_smaller) {
-				// One dominated another...
-				// finish to handle this group with the new information.
-				if(has_bigger) {
-					// is dominated
-					++dominated_count;
-					for(++iter; iter != pareto_set.end(); ++iter) {
-						p = &iter->second;
-						ip = std::begin(p->vals);
-						if(*(ip++) > key) {
-							break;
-						}
-						if(dominates(ip, std::end(p->vals), vals_iter)) {
-							++dominated_count;
+			do {
+				if(*iv < *pv) {
+					dominated_by_p = false;
+					if(can_dominate) {
+						dominating_p = true;
+						while(++iv != std::end(vals)) {
+							++pv;
+							if(*iv > *pv) {
+								dominating_p = false;
+								break;
+							}
 						}
 					}
-				} else {
-					// is dominating
-					auto erase_and_inc = [&]() {
-						auto tmp = iter++;
-						pareto_set.erase(tmp);
-					};
-
-					erase_and_inc();
-					--dominated_count;
-
-					while(iter != pareto_set.end()) {
-						p = &iter->second;
-						ip = std::begin(p->vals);
-						if(*(ip++) > key) {
-							break;
-						}
-						if(dominates(vals_iter, std::end(vals), ip)) {
-							erase_and_inc();
-						} else {
-							++iter;
-						}
-					}
-				}
-				break;
-			}
-		}
-
-		// If current solution not dominates anyone so far in pareto set,
-		// test if smaller key solutions dominates over it...
-		if(dominated_count >= 0) {
-			for(auto iter = ref_iter; iter != pareto_set.begin();)
-			{
-				--iter;
-
-				Individual &p = iter->second;
-				auto ip = std::begin(p.vals);
-				++ip;
-
-				if(dominates(ip, std::end(p.vals), vals_iter, true)) {
-					++dominated_count;
-				} else {
 					break;
+				} else if(*pv < *iv) {
+					can_dominate = false;
+				}
+				++pv;
+				++iv;
+			} while(iv != std::end(vals));
+
+			if(dominated_by_p) {
+				++dominated_count;
+				break;
+			} else if(dominating_p) {
+				*(p++) = {x, vals};
+				--dominated_count;
+				break;
+			}
+			++p;
+		} while(p != pareto_set.end());
+
+		auto dominates = [](const ValVector& a, const ValVector& b) {
+			auto av = std::begin(a);
+			auto bv = std::begin(b);
+			do {
+				if(*bv < *av)
+					return false;
+				++av;
+				++bv;
+			} while(av != std::end(a));
+			return true;
+		};
+
+		if(dominated_count > 0) {
+			while(p != pareto_set.end()) {
+				if(dominates(p->vals, vals)) {
+					++dominated_count;
+				}
+				++p;
+			}
+		} else if(dominated_count < 0) {
+			while(p != pareto_set.end()) {
+				if(dominates(vals, p->vals)) {
+					auto tmp = p++;
+					pareto_set.erase(tmp);
+					--dominated_count;
+				} else {
+					++p;
 				}
 			}
-
-			if(dominated_count)
-				return dominated_count;
+		} else {
+			pareto_set.push_back({x, vals});
 		}
 
-		// This solution is not dominated, so remove from set every one dominated by it.
-		// Continues from where last search stopped.
-		if(iter != pareto_set.end()) {
-			auto ip = std::begin(iter->second.vals);
-			++ip;
-			if(dominates(vals_iter, std::end(vals), ip, true)) {
-				auto to_remove_from = iter;
-
-				for(++iter; iter != pareto_set.end(); ++iter) {
-					ip = std::begin(iter->second.vals);
-					++ip;
-					if(!dominates(vals_iter, std::end(vals), ip, true))
-						break;
-				}
-
-				pareto_set.erase(to_remove_from, iter);
-			}
-		}
-
-		pareto_set.emplace_hint(iter, key, Individual({x, vals}));
-
-		return 0;
+		return dominated_count;
 	}
 
 	size_t size() const
@@ -333,20 +292,13 @@ public:
 		return pareto_set.size();
 	}
 
-	std::vector<Individual> get_inner_set()
+	std::list<Individual> get_inner_set()
 	{
-		std::vector<Individual> ret;
-		ret.reserve(pareto_set.size());
-
-		for(const auto &e: pareto_set) {
-			ret.push_back(e.second);
-		}
-
-		return ret;
+		return pareto_set;
 	}
 
 private:
-	std::multimap<Real, Individual> pareto_set;
+	std::list<Individual> pareto_set;
 };
 
 template<class Vector, class ValVector>

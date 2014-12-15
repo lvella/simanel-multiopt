@@ -14,8 +14,8 @@ if len(lines[0]) == 2:
     line, = plt.plot(x, y, 'o')
     plt.show()
 else:
-    if len(lines) > 1200:
-        lines = random.sample(lines, 1200)
+    #if len(lines) > 1200:
+    #    lines = random.sample(lines, 1200)
     x, y, z = zip(*lines)
 
     fig = plt.figure()
